@@ -64,57 +64,221 @@ button{padding:12px 16px;border:0;border-radius:8px;font-size:1rem;font-weight:7
 <p class="small">Please submit only once unless your teacher instructs otherwise. Your result may be sent to your teacher for marking records.</p>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script>
-const ANSWERS = {"1":"B","2":"C","3":"A","4":"D","5":"B","6":"C","7":"A","8":"D","9":"B","10":"C","11":"D","12":"A","13":"B","14":"C","15":"D","16":"A","17":"B","18":"C","19":"D","20":"A","21":"B","22":"C","23":"D","24":"A","25":"B","26":"C","27":"D","28":"A","29":"B","30":"C","31":"D","32":"A","33":"B","34":"C","35":"D","36":"A","37":"B","38":"C","39":"D","40":"A"};
-const META = {"school":"Learning Without Borders","subject":"Science","className":"Grade 9","topic":"Reproduction in plants","instructions":"Choose the correct answer for each question.","passMark":50,"publicKey":"JD6I_4czDlm39KpcO","serviceId":"service_a3gbno7","templateId":"template_9oxrolw"};
+  
+<script>
+const META = {
+  school: "Learning Without Borders",
+  subject: "Science",
+  className: "Grade 9",
+  topic: "Reproduction in plants",
+  passMark: 50,
+  publicKey: "JD6I_4czDlm39KpcO",
+  serviceId: "service_a3gbno7",
+  templateId: "template_9oxrolw"
+};
+
 const TOTAL = 40;
-if (META.publicKey && window.emailjs) { try { emailjs.init({publicKey: META.publicKey}); } catch(e) {} }
-document.getElementById('worksheet').addEventListener('submit', async function(event) {
-  event.preventDefault();
-  const name = document.getElementById('student_name').value.trim();
-  const studentClass = document.getElementById('student_class').value.trim();
-  if (!name || !studentClass) { alert('Please enter your name and class.'); return; }
-  let score = 0, answered = 0, lines = [];
-  for (let i=1; i<=TOTAL; i++) {
-    const chosen = document.querySelector('input[name="q'+i+'"]:checked');
-    const val = chosen ? chosen.value : '';
-    if (val) answered++;
-    if (val === ANSWERS[i]) score++;
-    lines.push('Q'+i+': Student answer: '+(val || 'Not answered')+' | Correct answer: '+ANSWERS[i]);
-  }
-  const percentage = Math.round((score / TOTAL) * 100);
-  const result = document.getElementById('result');
-  result.hidden = false;
-  result.innerHTML = '<h2>Worksheet result</h2><p><strong>Student:</strong> '+escapeText(name)+'</p><p><strong>Score:</strong> '+score+' / '+TOTAL+'</p><p><strong>Percentage:</strong> '+percentage+'%</p><p><strong>Status:</strong> '+(percentage >= META.passMark ? 'Pass' : 'Keep practising')+'</p><h3>Answer review</h3>'+lines.map((line,i)=>'<p class="'+((((document.querySelector('input[name=q'+(i+1)+']:checked') || {}).value)===ANSWERS[i+1])?'correct':'incorrect')+'">'+escapeText(line)+'</p>').join('');
-  result.scrollIntoView({behavior:'smooth'});
-  if (META.publicKey && META.serviceId && META.templateId && window.emailjs && typeof emailjs.send === 'function') {
-    try {
-      await emailjs.send(META.serviceId, META.templateId, {
-        student_name: name,
-        student_class: studentClass,
-        subject: META.subject,
-        topic: META.topic,
-        score: score+' / '+TOTAL,
-        percentage: percentage+'%',
-        answers: lines.join('\n')
-      });
-      const notice = document.createElement('p');
-      notice.className = 'correct';
-      notice.textContent = 'Your result has been submitted successfully.';
-      result.appendChild(notice);
-    } catch (err) {
-      const notice = document.createElement('p');
-      notice.className = 'incorrect';
-      notice.textContent = 'Your score is shown above, but the email submission did not succeed. Please tell your teacher.';
-      result.appendChild(notice);
+
+const SUPABASE_URL = "https://yzhqnlvhioocjumebbnb.supabase.co";
+const SUPABASE_KEY = "sb_publishable_fOLujlfzlMpfjQoHpmpcaQ_S1rKCt8e";
+
+let supabaseClient;
+let studentSession;
+let studentName = "";
+let studentClass = "";
+let submissionComplete = false;
+
+if (window.emailjs) {
+  try {
+    emailjs.init({ publicKey: META.publicKey });
+  } catch (e) {}
+}
+
+function loadSupabase() {
+  return new Promise((resolve, reject) => {
+    if (window.supabase) {
+      resolve();
+      return;
     }
-  } else {
-    const notice = document.createElement('p');
-    notice.className = 'incorrect';
-    notice.textContent = 'Your score is shown above, but email could not be sent because EmailJS is not configured or could not load.';
-    result.appendChild(notice);
+
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Could not load Supabase."));
+    document.head.appendChild(script);
+  });
+}
+
+async function prepareWorksheet() {
+  const result = document.getElementById("result");
+  const submitButton = document.querySelector(
+    '#worksheet button[type="submit"], #worksheet input[type="submit"]'
+  );
+
+  try {
+    await loadSupabase();
+
+    supabaseClient = window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_KEY
+    );
+
+    const { data: sessionData, error: sessionError } =
+      await supabaseClient.auth.getSession();
+
+    if (sessionError || !sessionData.session) {
+      throw new Error("Please log in through the student portal before opening this worksheet.");
+    }
+
+    studentSession = sessionData.session;
+
+    const { data: profile, error: profileError } =
+      await supabaseClient
+        .from("student_profiles")
+        .select("full_name, class_name")
+        .eq("id", studentSession.user.id)
+        .single();
+
+    if (profileError || !profile) {
+      throw new Error("Your student profile could not be found. Please contact your teacher.");
+    }
+
+    studentName = profile.full_name;
+    studentClass = profile.class_name;
+
+    const nameField = document.getElementById("student_name");
+    const classField = document.getElementById("student_class");
+
+    if (nameField) {
+      nameField.value = studentName;
+      nameField.readOnly = true;
+    }
+
+    if (classField) {
+      classField.value = studentClass;
+      classField.disabled = true;
+    }
+
+    if (submitButton) submitButton.disabled = false;
+
+    result.hidden = false;
+    result.textContent = "Your profile is ready. You can now complete the worksheet.";
+
+  } catch (error) {
+    result.hidden = false;
+    result.textContent = error.message;
+    if (submitButton) submitButton.disabled = true;
+  }
+}
+
+document.getElementById("worksheet").addEventListener("submit", async function(event) {
+  event.preventDefault();
+
+  if (submissionComplete) {
+    alert("You have already submitted this worksheet.");
+    return;
+  }
+
+  if (!studentSession || !supabaseClient) {
+    alert("Your student login could not be verified. Please log in again.");
+    return;
+  }
+
+  const submitButton = document.querySelector(
+    '#worksheet button[type="submit"], #worksheet input[type="submit"]'
+  );
+
+  const result = document.getElementById("result");
+  if (submitButton) submitButton.disabled = true;
+
+  const answers = {};
+  let answered = 0;
+
+  for (let i = 1; i <= TOTAL; i++) {
+    const selected = document.querySelector(
+      'input[name="q' + i + '"]:checked'
+    );
+
+    const value = selected ? selected.value : "";
+    answers[String(i)] = value;
+
+    if (value) answered++;
+  }
+
+  result.hidden = false;
+  result.textContent = "Submitting your answers. Please wait...";
+
+  try {
+    const { data, error } = await supabaseClient.functions.invoke(
+      "submit-worksheet-result",
+      {
+        body: { answers }
+      }
+    );
+
+    if (error) throw error;
+    if (!data || !data.success) {
+      throw new Error(data?.error || "Your result could not be saved.");
+    }
+
+    const score = data.result.correct_answers;
+    const percentage = data.result.score;
+
+    submissionComplete = true;
+
+    result.innerHTML =
+      "<h2>Worksheet Result</h2>" +
+      "<p><strong>Student:</strong> " + escapeText(studentName) + "</p>" +
+      "<p><strong>Score:</strong> " + score + " / " + TOTAL + "</p>" +
+      "<p><strong>Percentage:</strong> " + percentage + "%</p>" +
+      "<p><strong>Status:</strong> " +
+      (percentage >= META.passMark ? "Pass" : "Keep practising") +
+      "</p>" +
+      "<p>Your official result has been saved successfully.</p>";
+
+    result.scrollIntoView({ behavior: "smooth" });
+
+    if (META.publicKey && META.serviceId && META.templateId &&
+        window.emailjs && typeof emailjs.send === "function") {
+      try {
+        await emailjs.send(META.serviceId, META.templateId, {
+          student_name: studentName,
+          student_class: studentClass,
+          subject: META.subject,
+          topic: META.topic,
+          score: score + " / " + TOTAL,
+          percentage: percentage + "%",
+          answers: "Student answered " + answered + " out of " + TOTAL + " questions."
+        });
+
+        const notice = document.createElement("p");
+        notice.textContent = "Email notification sent successfully.";
+        result.appendChild(notice);
+
+      } catch (emailError) {
+        const notice = document.createElement("p");
+        notice.textContent = "Your result was saved, but the email notification could not be sent.";
+        result.appendChild(notice);
+      }
+    }
+
+  } catch (error) {
+    result.textContent =
+      "Submission failed: " + (error.message || "Please try again or contact your teacher.");
+
+    if (submitButton) submitButton.disabled = false;
   }
 });
+
 function escapeText(value) {
-  return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  return String(value).replace(/[&<>"']/g, ch => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[ch]));
 }
+
+prepareWorksheet();
 </script></body></html>
