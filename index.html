@@ -208,15 +208,15 @@ document.getElementById("worksheet").addEventListener("submit", async function(e
   result.textContent = "Submitting your answers. Please wait...";
 
   try {
-    const { data, error } = await supabaseClient.functions.invoke(
-      "submit-worksheet-result",
-      {
-        body: {
-  answers,
-  worksheet_link: "https://jolatuji2016-hub.github.io/Reproduction-in-plants-/"
-}
-  
-    );
+  const { data, error } = await supabaseClient.functions.invoke(
+    "submit-worksheet-result",
+    {
+      body: {
+        answers,
+        worksheet_link: "https://jolatuji2016-hub.github.io/Reproduction-in-plants-/"
+      }
+    }
+  );
 
     if (error) throw error;
     if (!data || !data.success) {
